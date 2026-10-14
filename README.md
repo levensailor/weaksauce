@@ -2,6 +2,8 @@
 
 **Author:** Jeff Levensailor  
 **Repository:** [https://github.com/levensailor/weaksauce](https://github.com/levensailor/weaksauce)  
+**Live Vercel Production URL:** [https://temporary-flying-zircon-zsiojzn.vercel.app](https://temporary-flying-zircon-zsiojzn.vercel.app)  
+**Claim Deployment URL:** [https://vercel.com/claim-deployment?code=40d9d619-d209-4aee-bac2-0d305263468f](https://vercel.com/claim-deployment?code=40d9d619-d209-4aee-bac2-0d305263468f)  
 **Reference Taxonomy:** [https://voice.ai/tools](https://voice.ai/tools) (Filtered for a 3-Piece Home Recording Rock Band + Engineer/Tinkerer/Singer Workflow)  
 **Authentication / Login Instructions:** **Zero-Login / Anonymous Only.** No user accounts, login forms, sign-up walls, or artificial wait timers exist anywhere in the application. Open the URL and use every tool immediately.
 
@@ -61,7 +63,11 @@ npm run dev -- --port 43180
 
 ## Public Assets & Endpoints
 
+- **Live Vercel Production Deployment:** [https://temporary-flying-zircon-zsiojzn.vercel.app](https://temporary-flying-zircon-zsiojzn.vercel.app)
+- **Claim Deployment Link (Transfer to Vercel Account):** [https://vercel.com/claim-deployment?code=40d9d619-d209-4aee-bac2-0d305263468f](https://vercel.com/claim-deployment?code=40d9d619-d209-4aee-bac2-0d305263468f)
 - **GitHub Repository:** [https://github.com/levensailor/weaksauce](https://github.com/levensailor/weaksauce)
 - **Favicon Assets:** `/app/icon.svg` (Vector Brutalist Stencil `WS` + Waveform) and `/public/favicon.ico` (32x32 ICO)
-- **Health & Tool DSP API:** `GET /api/v1/health` and `POST /api/v1/tools/{tool_slug}`
+- **Health & Tool DSP API:**
+  - `GET https://temporary-flying-zircon-zsiojzn.vercel.app/api/v1/health`
+  - `POST https://temporary-flying-zircon-zsiojzn.vercel.app/api/v1/tools/{tool_slug}`
 - **Login Instructions:** None required — application is 100% anonymous and zero-login.

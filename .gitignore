@@ -44,6 +44,7 @@ yarn-error.log*
 
 # vercel & cloud
 .vercel
+/agent-tools/
 
 # misc & typescript
 .DS_Store

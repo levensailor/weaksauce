@@ -2,6 +2,10 @@
 
 All notable features added to **WEAKSAUCE** are documented in this timestamped log.
 
+## [2026-10-14 10:02:00 EDT] - Deploy Weaksauce to Vercel Production and Document Live Public URL
+- Deployed **WEAKSAUCE** (`Next.js 16.4.0` + `Python 3.12 FastAPI` serverless backend) to Vercel production (`dpl_59FupCAXskmdk32MafZSrozy9yFU`) at [https://temporary-flying-zircon-zsiojzn.vercel.app](https://temporary-flying-zircon-zsiojzn.vercel.app) with claim transfer link (`https://vercel.com/claim-deployment?code=40d9d619-d209-4aee-bac2-0d305263468f`).
+- Verified HTTP `200 OK` across the Brutalist Studio Workbench frontend (`/`), health telemetry endpoint (`/api/v1/health`), and Studio DSP API route (`/api/v1/tools/{slug}`).
+
 ## [2026-10-14 01:06:00 EDT] - Integrate All 4 Rock Studio Toolset Branches (`01`–`04`) and 8 Voice.ai Filtered DSP Racks into `main`
 - **Toolset `01 // STEMS & ISOLATION` (`VocalRemoverRack` & `StemSplitterRack`)**:
   - `01.1` **Vocal Remover**: Cascaded 4th-order Linkwitz-Riley (`LR4`) bass/cymbal crossover guards (`80–300 Hz` and `5–14 kHz`), Mid/Side azimuth vocal extraction, dual synchronized stem waveform scrubbers (`VOCALS` + `INSTRUMENTAL`), `180°` phase-invert null-test toggle, and Guide Vocal rehearsal faders (`0–150%`).
