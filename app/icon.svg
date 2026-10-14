@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="0" y="0" width="64" height="64" fill="#0D0D0D"/>
+  <rect x="2" y="2" width="60" height="60" fill="none" stroke="#B8FF01" stroke-width="4"/>
+  <rect x="6" y="6" width="52" height="10" fill="#FF3B00"/>
+  <text x="9" y="13.5" font-family="monospace" font-weight="900" font-size="7.5" fill="#0D0D0D" letter-spacing="1">WEAKSAUCE</text>
+  <path d="M8 22 H14 L17 34 L20 24 H24 L27 34 L30 22 H36 L31 44 H26 L22 31 L18 44 H13 Z" fill="#B8FF01"/>
+  <path d="M39 22 H56 V27 H45 V30.5 H56 V44 H38 V39 H50 V35 H39 Z" fill="#F4F3EF"/>
+  <g fill="#00E5FF">
+    <rect x="8" y="48" width="4" height="8"/>
+    <rect x="14" y="46" width="4" height="10"/>
+    <rect x="20" y="50" width="4" height="6"/>
+    <rect x="26" y="45" width="4" height="11" fill="#FF3B00"/>
+    <rect x="32" y="47" width="4" height="9"/>
+    <rect x="38" y="49" width="4" height="7"/>
+    <rect x="44" y="46" width="4" height="10" fill="#B8FF01"/>
+    <rect x="50" y="48" width="6" height="8"/>
+  </g>
+</svg>
