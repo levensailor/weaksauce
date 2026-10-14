@@ -246,7 +246,7 @@ export const TOOLSETS: ToolsetDefinition[] = [
     description:
       "Isolate vocals, guitar, bass, and drums for minus-one rehearsal, learning parts, and remixing.",
     tools: ["vocal-remover", "stem-splitter"],
-    workerTrack: "Track 1 (VocalRemoverTool + StemSplitterTool)",
+    workerTrack: "Track 1 (VocalRemoverRack + StemSplitterRack)",
   },
   {
     id: "room-cleanup",
@@ -256,7 +256,7 @@ export const TOOLSETS: ToolsetDefinition[] = [
     description:
       "Strip basement reverb, garage flutter echo, 60Hz guitar amp hum, and mic hiss.",
     tools: ["reverb-remover", "echo-remover", "audio-enhancer"],
-    workerTrack: "Track 2 (ReverbRemoverTool + EchoRemoverTool + AudioEnhancerTool)",
+    workerTrack: "Track 2 (CleanupSuiteRack: Reverb + Echo + Enhancer)",
   },
   {
     id: "vocal-key-bpm",
@@ -266,7 +266,7 @@ export const TOOLSETS: ToolsetDefinition[] = [
     description:
       "Transpose vocal pitch/formants, double-track vocals, and detect song Key, Scale & BPM.",
     tools: ["voice-changer", "bpm-finder"],
-    workerTrack: "Track 3 (VoiceChangerTool + KeyBpmFinderTool)",
+    workerTrack: "Track 3 (VocalBpmLabRack: Vocal Lab + Key/BPM Finder)",
   },
   {
     id: "capture-convert",
@@ -276,7 +276,7 @@ export const TOOLSETS: ToolsetDefinition[] = [
     description:
       "Record uncompressed studio takes with a click track and convert between WAV, FLAC, MP3, OGG, M4A & MP4.",
     tools: ["voice-recorder", "audio-converter"],
-    workerTrack: "Track 4 (VoiceRecorderTool + AudioConverterTool)",
+    workerTrack: "Track 4 (CaptureConvertRack: Studio Recorder + Converter)",
   },
 ];
 
@@ -330,7 +330,7 @@ export const TOOLS: ToolDefinition[] = [
       "Decomposes stereo signal into Mid = (L+R)/2 and Side = (L-R)/2 with cascaded Linkwitz-Riley low/high crossovers, isolating center vocal formants while keeping sub-bass (<170 Hz) and stereo guitars intact.",
     apiEndpoint: "/api/v1/tools/vocal-remover",
     recipe: "vocal-remover",
-    workerTrackFile: "src/components/tools/VocalRemoverTool.tsx",
+    workerTrackFile: "app/components/tools/VocalRemoverRack.tsx",
   },
   {
     id: "stem-splitter",
@@ -376,7 +376,7 @@ export const TOOLS: ToolDefinition[] = [
       client: [
         "Web Audio 4th-Order Linkwitz-Riley + Mid/Side Transient Matrix",
         "wavesurfer.js Multi-Stem Sync",
-        "fflate ZIP bundler",
+        "CRC32 Multi-Stem ZIP Bundler",
       ],
       backend: [
         "librosa.decompose.hpss",
@@ -386,14 +386,14 @@ export const TOOLS: ToolDefinition[] = [
     },
     uiComponentSpec: [
       "Mode Switch: [3-PIECE ROCK CORE (4 STEMS)] vs [FULL 6-STEM SPLIT]",
-      "6-Channel Brutalist Rehearsal Console with Mute/Solo/Gain per instrument",
-      "[EXPORT CUSTOM MINUS-ONE MIX] + individual stem export",
+      "6-Channel Brutalist Rehearsal Console with Mute/Solo/Pan/Gain per instrument",
+      "[EXPORT CUSTOM MINUS-ONE MIX] + [DOWNLOAD ALL STEMS (.ZIP)]",
     ],
     dspArchitecture:
       "Uses 4th-order Linkwitz-Riley crossovers + fast/slow envelope transient discrimination to partition Bass (<200Hz mono), Drums (percussive transients), Vocals (center harmonic band), and Guitar (stereo midrange overdrive).",
     apiEndpoint: "/api/v1/tools/stem-splitter",
     recipe: "stem-splitter",
-    workerTrackFile: "src/components/tools/StemSplitterTool.tsx",
+    workerTrackFile: "app/components/tools/StemSplitterRack.tsx",
   },
   {
     id: "reverb-remover",
@@ -415,14 +415,16 @@ export const TOOLS: ToolDefinition[] = [
       { id: "noise", label: "Removed Reverb Tail (Room Bleed)", color: "#FF3B00" },
     ],
     params: [
-      { id: "dereverbAmount", label: "REVERB SUPPRESSION", unit: "%", min: 10, max: 100, step: 5, defaultValue: 75 },
-      { id: "tailReleaseMs", label: "ROOM TAIL TIGHTENING", unit: "ms", min: 30, max: 400, step: 10, defaultValue: 120 },
-      { id: "deBoxHz", label: "350HZ BASEMENT BOXINESS CUT", unit: "dB", min: -12, max: 0, step: 0.5, defaultValue: -4 },
+      { id: "dereverbAmount", label: "DEREVERB AMOUNT", unit: "%", min: 0, max: 100, step: 5, defaultValue: 75 },
+      { id: "tailReleaseMs", label: "TAIL DECAY GATE", unit: "ms", min: 30, max: 400, step: 10, defaultValue: 120 },
+      { id: "boxinessCutFreqHz", label: "LOW-MID BOXINESS FREQ", unit: "Hz", min: 250, max: 500, step: 10, defaultValue: 350 },
+      { id: "deBoxHz", label: "LOW-MID BOXINESS CUT", unit: "dB", min: -12, max: 0, step: 0.5, defaultValue: -4.5 },
+      { id: "dryRoomReBlendPct", label: "DRY / ROOM RE-BLEND FADER", unit: "%", min: 0, max: 50, step: 2, defaultValue: 12 },
     ],
     openSourceStack: {
       client: [
-        "Web Audio Envelope Follower + Transient-Preserving Decay Gate",
-        "Biquad 350Hz Boxiness Notch",
+        "Web Audio Envelope-Tracked Transient Expander + Spectral Decay Attenuation",
+        "Biquad 250–500Hz Drywall Boxiness Cut + Dry/Room Re-Blend Bus",
       ],
       backend: [
         "scipy.signal STFT Late-Reverb Spectral Variance Suppression",
@@ -430,14 +432,14 @@ export const TOOLS: ToolDefinition[] = [
       ],
     },
     uiComponentSpec: [
-      "Dual track output matching voice.ai: [Dry / De-Reverbed Signal] + [Removed Reverb Tail]",
-      "Reverb Suppression %, Tail Tightening ms, and 350Hz Basement Boxiness Cut dB",
+      "Dual track output matching voice.ai: [Dry Signal (De-Reverbed)] + [Removed Reverb Tail (Room Bleed Residual)]",
+      "Dereverb Amount (0–100%), Tail Decay Gate (ms), Low-Mid Boxiness Cut (250–500 Hz), and Dry/Room Re-Blend Fader",
     ],
     dspArchitecture:
-      "Tracks fast attack peaks and applies exponential decay gating to suppress diffuse room tails while carving 350Hz drywall boxiness.",
+      "Tracks fast attack peaks and applies exponential decay gating to suppress diffuse room tails while carving 250–500Hz drywall boxiness and re-blending controlled studio air.",
     apiEndpoint: "/api/v1/tools/reverb-remover",
     recipe: "reverb-remover",
-    workerTrackFile: "src/components/tools/ReverbRemoverTool.tsx",
+    workerTrackFile: "app/components/tools/CleanupSuiteRack.tsx",
   },
   {
     id: "echo-remover",
@@ -450,23 +452,23 @@ export const TOOLS: ToolDefinition[] = [
     voiceAiRoute: "/tools/echo-remover",
     tagline: "Eliminate slapback delay, parallel-wall flutter echo, and comb filtering.",
     description:
-      "Detects slapback echo lag times (15–250 ms) and suppresses discrete wall reflections, outputting both Clean Signal and Isolated Echo Residual.",
+      "Scans 15–350 ms autocorrelation peaks to detect garage/basement slapback lag and wall bounce distance, cancelling reflections and outputting Clean Audio and Isolated Echo Residual.",
     bandUseCase:
       "Fix slapback bounce off garage doors or concrete basement walls on loud rock vocals and snare hits.",
     acceptedFormats: [".wav", ".mp3", ".flac", ".ogg", ".m4a"],
     outputs: [
-      { id: "vocals", label: "Clean Signal (Echo Removed)", color: "#00E5FF" },
+      { id: "vocals", label: "Clean Audio (Echo Cancelled)", color: "#00E5FF" },
       { id: "noise", label: "Isolated Echo Residual", color: "#FF3B00" },
     ],
     params: [
       { id: "echoSuppression", label: "ECHO REDUCTION DEPTH", unit: "%", min: 10, max: 100, step: 5, defaultValue: 80 },
-      { id: "delaySearchMs", label: "SLAPBACK DELAY FOCUS", unit: "ms", min: 15, max: 250, step: 5, defaultValue: 55 },
+      { id: "delaySearchMs", label: "SLAPBACK DELAY FOCUS", unit: "ms", min: 15, max: 350, step: 0.5, defaultValue: 42.5 },
       { id: "highDampHz", label: "FLUTTER REFLECTION DAMPING", unit: "Hz", min: 2000, max: 12000, step: 250, defaultValue: 6500 },
     ],
     openSourceStack: {
       client: [
-        "Autocorrelation Echo Lag Detector",
-        "Inverse Comb Cancellation Filter + Inter-Transient Gate",
+        "15–350ms Autocorrelation Slapback Peak Scanner (ms + meters/feet wall distance)",
+        "Inverse Comb Cancellation Filter + Flutter Suppression Gate",
       ],
       backend: [
         "numpy Cepstral Echo Peak Cancellation",
@@ -475,14 +477,14 @@ export const TOOLS: ToolDefinition[] = [
       ],
     },
     uiComponentSpec: [
-      "Auto-detected Slapback Delay readout (ms) + Inverse Comb Echo Suppressor",
-      "Dual outputs: [Clean Signal (Echo Removed)] and [Isolated Echo Residual]",
+      "Automatic Slapback Delay Detector (15–350 ms) with wall bounce distance readout (e.g. 42.5 ms / ~7.3m wall bounce)",
+      "Dual outputs: [Clean Audio (Echo Cancelled)] and [Isolated Echo Residual]",
     ],
     dspArchitecture:
-      "Attenuates delayed slapback copies at the target lag window via inverse comb subtraction and inter-transient envelope gating.",
+      "Scans transient autocorrelation across 15–350 ms to lock onto primary room reflection lag and subtracts damped multi-tap comb copies.",
     apiEndpoint: "/api/v1/tools/echo-remover",
     recipe: "echo-remover",
-    workerTrackFile: "src/components/tools/EchoRemoverTool.tsx",
+    workerTrackFile: "app/components/tools/CleanupSuiteRack.tsx",
   },
   {
     id: "audio-enhancer",
@@ -495,7 +497,7 @@ export const TOOLS: ToolDefinition[] = [
     voiceAiRoute: "/tools/audio-enhancer",
     tagline: "Kill 60Hz guitar amp hum, mic hiss, and mud while maximizing rock presence.",
     description:
-      "One-stop studio cleanup combining an 8-harmonic 60Hz/50Hz ground-loop notch bank, spectral noise floor gate, vocal/instrument presence lift, and -14 LUFS limiter.",
+      "One-stop studio cleanup combining a surgical 8-harmonic 60Hz (US) / 50Hz (EU) ground-loop notch bank (60–480 Hz), spectral amp hiss gate, 3.5 kHz presence exciter, and -14 LUFS rock master limiter.",
     bandUseCase:
       "Clean up noisy single-coil guitar pickups, pedalboard buzz, vocal mic floor noise, and muddy 3-piece rehearsal mixes.",
     acceptedFormats: [".mp3", ".wav", ".flac", ".ogg", ".m4a"],
@@ -508,12 +510,12 @@ export const TOOLS: ToolDefinition[] = [
         id: "preset",
         label: "STUDIO TARGET PROFILE",
         options: [
-          "Vocal Mic Clarity & De-Noise",
-          "Guitar Amp 60Hz Hum & Hiss Killer",
-          "Bass DI Sub-Tightener",
-          "Full 3-Piece Rehearsal Master (-14 LUFS)",
+          "[VOCAL MIC ENHANCE]",
+          "[GUITAR AMP HUM & HISS KILLER]",
+          "[BASS DI TIGHTENER]",
+          "[FULL REHEARSAL DEMO MASTER]",
         ],
-        defaultOption: "Vocal Mic Clarity & De-Noise",
+        defaultOption: "[GUITAR AMP HUM & HISS KILLER]",
       },
       {
         id: "humFreq",
@@ -527,15 +529,14 @@ export const TOOLS: ToolDefinition[] = [
       },
     ],
     params: [
-      { id: "denoiseAmount", label: "NOISE FLOOR REDUCTION", unit: "%", min: 0, max: 100, step: 5, defaultValue: 70 },
-      { id: "presenceBoostDb", label: "CLARITY & PRESENCE LIFT", unit: "dB", min: 0, max: 9, step: 0.5, defaultValue: 3.5 },
+      { id: "denoiseAmount", label: "NOISE FLOOR REDUCTION", unit: "%", min: 0, max: 100, step: 5, defaultValue: 75 },
+      { id: "presenceBoostDb", label: "3.5 KHZ PRESENCE EXCITER", unit: "dB", min: 0, max: 9, step: 0.5, defaultValue: 3.5 },
       { id: "humNotchHz", label: "HUM FUNDAMENTAL (50/60)", unit: "Hz", min: 50, max: 60, step: 10, defaultValue: 60 },
     ],
     openSourceStack: {
       client: [
-        "8-Harmonic 60Hz/50Hz Notch Filter Bank",
-        "Spectral Noise Gate",
-        "Presence EQ + Brickwall Limiter",
+        "8-Harmonic 60Hz/50Hz Notch Filter Bank (60, 120, 180, 240, 300, 360, 420, 480 Hz)",
+        "Spectral Amp Hiss Gate + 3.5kHz Presence Exciter + -14 LUFS Limiter",
       ],
       backend: [
         "noisereduce",
@@ -545,14 +546,14 @@ export const TOOLS: ToolDefinition[] = [
       ],
     },
     uiComponentSpec: [
-      "4 Rock Studio Macro Profiles (Vocal Mic, Guitar 60Hz Hum Killer, Bass DI, Full Rehearsal Master)",
-      "60Hz / 50Hz 8-Harmonic Notch selector + Denoise % + Presence Lift dB",
+      "4 One-Click Rock Studio Macro Profiles: [VOCAL MIC ENHANCE], [GUITAR AMP HUM & HISS KILLER], [BASS DI TIGHTENER], [FULL REHEARSAL DEMO MASTER]",
+      "8-Harmonic 60Hz/50Hz Notch Bank with visual harmonic attenuation meter + 3.5 kHz presence exciter",
     ],
     dspArchitecture:
-      "Cascades high-Q (Q=30) notch filters across harmonics f0..4*f0, gates low-energy hiss frames, boosts 3.2kHz presence, and normalizes loudness.",
+      "Cascades high-Q (Q=35) notch filters across harmonics 1..8 (60–480 Hz), gates stationary preamp hiss, excites 3.5kHz presence, and brickwall-limits to -14 LUFS.",
     apiEndpoint: "/api/v1/tools/audio-enhancer",
     recipe: "audio-enhancer",
-    workerTrackFile: "src/components/tools/AudioEnhancerTool.tsx",
+    workerTrackFile: "app/components/tools/CleanupSuiteRack.tsx",
   },
   {
     id: "voice-changer",
@@ -577,22 +578,25 @@ export const TOOLS: ToolDefinition[] = [
         id: "vocalCharacter",
         label: "ROCK VOCAL CHARACTER MODE",
         options: [
-          "Abbey Road ADT Stereo Doubler",
-          "Clean Pitch & Formant Shift",
-          "Octave Down Baritone Sub-Growl",
+          "Clean Pitch Transpose",
+          "Abbey Road ADT Vocal Doubler",
+          "Octave Down Baritone Grit",
           "Octave Up Falsetto / 12-String Shimmer",
-          "Power Trio 3rd + 5th Backing Harmonizer",
-          "Garage Bullhorn / Lo-Fi Radio Vox",
-          "Driven Tube Preamp (1176 + Saturation)",
+          "Power Trio 3rd & 5th Harmonizer",
+          "Garage Megaphone / Lo-Fi Radio Vox",
+          "Driven Tube Mic Preamp",
           "Slapback Rockabilly / Post-Punk Tape",
         ],
-        defaultOption: "Abbey Road ADT Stereo Doubler",
+        defaultOption: "Abbey Road ADT Vocal Doubler",
       },
     ],
     params: [
       { id: "pitchSemitones", label: "SET PITCH (SEMITONES)", unit: "st", min: -12, max: 12, step: 1, defaultValue: 0 },
       { id: "fineCents", label: "FINE TUNE (CENTS)", unit: "ct", min: -100, max: 100, step: 5, defaultValue: 0 },
-      { id: "formantShift", label: "FORMANT / THROAT SHIFT", unit: "st", min: -6, max: 6, step: 0.5, defaultValue: 0 },
+      { id: "formantShift", label: "FORMANT / THROAT SHIFT", unit: "st", min: -12, max: 12, step: 0.5, defaultValue: 0 },
+      { id: "adtDelayMs", label: "ABBEY ROAD ADT DELAY", unit: "ms", min: 15, max: 35, step: 1, defaultValue: 22 },
+      { id: "harmonyBlendPct", label: "3-PART HARMONY BLEND", unit: "%", min: 0, max: 100, step: 5, defaultValue: 0 },
+      { id: "tubeDriveDb", label: "TUBE PREAMP SATURATION", unit: "dB", min: 0, max: 18, step: 0.5, defaultValue: 2.5 },
       { id: "wetMix", label: "EFFECT / HARMONY BLEND", unit: "%", min: 0, max: 100, step: 5, defaultValue: 65 },
     ],
     openSourceStack: {
@@ -614,7 +618,7 @@ export const TOOLS: ToolDefinition[] = [
       "Combines dual-grain Hann-windowed pitch shifting with modulated 22ms Haas stereo ADT doubling and asymmetric tube saturation.",
     apiEndpoint: "/api/v1/tools/voice-changer",
     recipe: "voice-changer",
-    workerTrackFile: "src/components/tools/VoiceChangerTool.tsx",
+    workerTrackFile: "app/components/tools/VocalBpmLabRack.tsx",
   },
   {
     id: "bpm-finder",
@@ -627,7 +631,7 @@ export const TOOLS: ToolDefinition[] = [
     voiceAiRoute: "/tools/bpm-finder",
     tagline: "Batch detect Song Key, Scale, BPM, Camelot code, and guitar pedal delay times.",
     description:
-      "Replicates voice.ai's 240Hz low-pass onset beat detector and 12-bin Chroma Key/Scale analyzer, adding a guitar delay pedal millisecond calculator (1/4, 1/8., 1/8, 1/16), Tap Tempo, and E-Standard / Drop-D reference tuning drones.",
+      "Replicates voice.ai's 240Hz low-pass onset beat detector and 12-bin Chroma Key/Scale analyzer, adding a guitar delay pedal millisecond calculator (1/4, 1/8., 1/8, 1/8T, 1/16), Tap Tempo, and E-Standard / Drop-D reference tuning drones.",
     bandUseCase:
       "Drop rehearsal takes or reference tracks to build a band setlist sheet with exact BPM, Key/Scale, Tap Tempo, and millisecond delay pedal subdivisions.",
     acceptedFormats: [".mp3", ".wav", ".flac", ".ogg", ".m4a"],
@@ -674,7 +678,7 @@ export const TOOLS: ToolDefinition[] = [
       "Filters signal with a 240Hz low-pass biquad (matching voice.ai's C5vx8orS.js worker), computes onset autocorrelation for BPM, and correlates 12-pitch-class chroma energy.",
     apiEndpoint: "/api/v1/tools/bpm-finder",
     recipe: "bpm-finder",
-    workerTrackFile: "src/components/tools/KeyBpmFinderTool.tsx",
+    workerTrackFile: "app/components/tools/VocalBpmLabRack.tsx",
   },
   {
     id: "voice-recorder",
@@ -721,7 +725,7 @@ export const TOOLS: ToolDefinition[] = [
       "Captures uncolored PCM audio from selected audio interface/mic input, applies digital trim, and encodes directly to IEEE PCM WAV.",
     apiEndpoint: "/api/v1/tools/voice-recorder",
     recipe: "voice-recorder",
-    workerTrackFile: "src/components/tools/VoiceRecorderTool.tsx",
+    workerTrackFile: "app/components/tools/CaptureConvertRack.tsx",
   },
   {
     id: "audio-converter",
@@ -781,9 +785,9 @@ export const TOOLS: ToolDefinition[] = [
     ],
     dspArchitecture:
       "Demuxes audio from any media container, resamples via OfflineAudioContext to target sample rate, optionally sums L+R to phase-safe mono, and encodes master output.",
-    apiEndpoint: "/api/v1/tools/convert",
+    apiEndpoint: "/api/v1/tools/converter",
     recipe: "audio-converter",
-    workerTrackFile: "src/components/tools/AudioConverterTool.tsx",
+    workerTrackFile: "app/components/tools/CaptureConvertRack.tsx",
   },
 ];
 

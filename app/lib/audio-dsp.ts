@@ -1,4 +1,14 @@
 import { DspRecipeType } from "@/app/lib/tool-catalog";
+import {
+  runAudioEnhancerDsp,
+  runEchoRemoverDsp,
+  runReverbRemoverDsp,
+} from "@/app/lib/dsp/cleanup-dsp";
+import {
+  ROCK_VOCAL_PRESETS,
+  RockVocalPresetId,
+  renderVocalPitchLabDsp,
+} from "@/app/lib/dsp/vocal-bpm-dsp";
 
 export interface DemoStemOption {
   id: string;
@@ -82,10 +92,10 @@ export function synthesizeDemoAudioBuffer(
 
   const chordRoots =
     presetId === "drop-d-riff"
-      ? [73.42, 87.31, 82.41, 65.41] // D2, F2, E2, C2
+      ? [73.42, 87.31, 82.41, 65.41]
       : presetId === "raw-vocal-hum"
-      ? [110.0, 87.31, 130.81, 98.0] // A2, F2, C3, G2
-      : [82.41, 98.0, 110.0, 123.47]; // E2, G2, A2, B2
+      ? [110.0, 87.31, 130.81, 98.0]
+      : [82.41, 98.0, 110.0, 123.47];
 
   for (let i = 0; i < length; i++) {
     const t = i / sr;
@@ -94,7 +104,6 @@ export function synthesizeDemoAudioBuffer(
     const barIndex = Math.floor(beatIndex / 2) % chordRoots.length;
     const rootFreq = chordRoots[barIndex];
 
-    // 1. Kick & Snare Drum Bus (Mono Center)
     let drums = 0;
     const isKickBeat = beatIndex % 2 === 0;
     const isSnareBeat = beatIndex % 2 === 1;
@@ -114,14 +123,12 @@ export function synthesizeDemoAudioBuffer(
       ((Math.cos(i * 78.233) * 19341.12) % 1) * Math.exp(-hatPhase * 28) * 0.1;
     drums += hatNoise;
 
-    // 2. Bass Guitar (Mono Center)
     const bassEnv = 0.75 + 0.25 * Math.exp(-beatPhase * 6);
     const bass =
       (Math.sin(2 * Math.PI * rootFreq * t) * 0.36 +
         Math.sin(2 * Math.PI * rootFreq * 2 * t) * 0.14) *
       bassEnv;
 
-    // 3. Stereo Panned Crunch Guitars
     const gtrRawL =
       Math.sin(2 * Math.PI * rootFreq * 2 * t) +
       0.7 * Math.sin(2 * Math.PI * rootFreq * 3 * t) +
@@ -133,7 +140,6 @@ export function synthesizeDemoAudioBuffer(
     const gtrL = Math.tanh(gtrRawL * 2.4) * 0.24;
     const gtrR = Math.tanh(gtrRawR * 2.4) * 0.24;
 
-    // 4. Center Lead Vocal (Jeff)
     const vibrato = Math.sin(2 * Math.PI * 5.4 * t) * 3.2;
     const vocalPitch = rootFreq * 4 + vibrato;
     const phraseGate = Math.sin(Math.PI * ((t % 1.5) / 1.5)) > 0.15 ? 1.0 : 0.05;
@@ -145,11 +151,19 @@ export function synthesizeDemoAudioBuffer(
 
     if (presetId === "raw-vocal-hum") {
       const hum =
-        Math.sin(2 * Math.PI * 60 * t) * 0.09 +
+        Math.sin(2 * Math.PI * 60 * t) * 0.085 +
         Math.sin(2 * Math.PI * 120 * t) * 0.05 +
-        Math.sin(2 * Math.PI * 180 * t) * 0.04;
+        Math.sin(2 * Math.PI * 180 * t) * 0.04 +
+        Math.sin(2 * Math.PI * 240 * t) * 0.025 +
+        Math.sin(2 * Math.PI * 300 * t) * 0.02 +
+        Math.sin(2 * Math.PI * 360 * t) * 0.015 +
+        Math.sin(2 * Math.PI * 420 * t) * 0.012 +
+        Math.sin(2 * Math.PI * 480 * t) * 0.01;
+      const slapLagSamples = Math.floor(0.0425 * sr);
       const slapback =
-        i > 2400 ? Math.sin(2 * Math.PI * vocalPitch * ((i - 2400) / sr)) * 0.12 : 0;
+        i > slapLagSamples
+          ? Math.sin(2 * Math.PI * vocalPitch * ((i - slapLagSamples) / sr)) * 0.16
+          : 0;
       left[i] = Math.max(-0.98, Math.min(0.98, vocal * 1.35 + gtrL * 0.45 + hum + slapback));
       right[i] = Math.max(-0.98, Math.min(0.98, vocal * 1.35 + gtrR * 0.45 + hum - slapback));
     } else {
@@ -204,8 +218,7 @@ export function analyzeAudioBuffer(buffer: AudioBuffer): AudioMetrics {
   const denom = Math.sqrt(corrDenL * corrDenR);
   const phaseCorrelation = denom > 1e-9 ? Number((corrNum / denom).toFixed(2)) : 1.0;
 
-  // 240Hz Low-Pass Onset envelope autocorrelation for BPM detection (matching voice.ai)
-  const hop = Math.floor(sr * 0.02); // 20ms frames
+  const hop = Math.floor(sr * 0.02);
   const numFrames = Math.floor(length / hop);
   const env = new Float32Array(numFrames);
   let lp = 0;
@@ -235,7 +248,6 @@ export function analyzeAudioBuffer(buffer: AudioBuffer): AudioMetrics {
   const detectedBpm = Math.round((60 / (bestLag * 0.02)) * 2) / 2;
   const quarterMs = Number((60000 / Math.max(40, detectedBpm)).toFixed(1));
 
-  // 12-note chroma energy probe
   const chromaScores = new Array<number>(12).fill(0);
   const probeWindow = Math.min(length, sr * 3);
   for (let pitchClass = 0; pitchClass < 12; pitchClass++) {
@@ -303,22 +315,38 @@ export async function runToolDspRecipe(
 
   switch (recipe) {
     case "vocal-remover": {
-      const voxGain = dbToLinear(params.vocalGainDb ?? -24);
+      const voxGain = dbToLinear(params.vocalGainDb ?? -12);
       const instGain = dbToLinear(params.instGainDb ?? 0);
-      const alphaLow = Math.min(0.25, (2 * Math.PI * (params.lowCutHz ?? 170)) / sr);
-      let lpL = 0;
-      let lpR = 0;
+      const lowCut = Math.max(80, Math.min(300, params.lowCutHz ?? 170));
+      const highCut = Math.max(5000, Math.min(14000, params.highCutHz ?? 8500));
+      const alphaLow = Math.min(0.45, (2 * Math.PI * lowCut) / sr);
+      const alphaHigh = Math.min(0.85, (2 * Math.PI * highCut) / sr);
+      let lpLowL = 0;
+      let lpLowR = 0;
+      let lpHighL = 0;
+      let lpHighR = 0;
+      let smoothMid = 0;
+      let smoothSide = 0;
       for (let i = 0; i < source.length; i++) {
         const l = inL[i];
         const r = inR[i];
-        lpL += alphaLow * (l - lpL);
-        lpR += alphaLow * (r - lpR);
-        const mid = 0.5 * (l + r);
-        const side = 0.5 * (l - r);
-        const bassMono = 0.5 * (lpL + lpR);
-        const isolatedVocal = mid - bassMono * 0.85;
-        const instL = side + bassMono * 0.95;
-        const instR = -side + bassMono * 0.95;
+        lpLowL += alphaLow * (l - lpLowL);
+        lpLowR += alphaLow * (r - lpLowR);
+        const midHighL = l - lpLowL;
+        const midHighR = r - lpLowR;
+        lpHighL += alphaHigh * (midHighL - lpHighL);
+        lpHighR += alphaHigh * (midHighR - lpHighR);
+        const airL = midHighL - lpHighL;
+        const airR = midHighR - lpHighR;
+        const mid = 0.5 * (lpHighL + lpHighR);
+        const side = 0.5 * (lpHighL - lpHighR);
+        smoothMid = 0.992 * smoothMid + 0.008 * Math.abs(mid);
+        smoothSide = 0.992 * smoothSide + 0.008 * Math.abs(side);
+        const centerMask = smoothMid / (smoothMid + smoothSide * 1.45 + 1e-6);
+        const isolatedVocal = mid * centerMask + 0.25 * (airL + airR) * centerMask;
+        const instMidRes = mid * (1 - centerMask * 0.92);
+        const instL = lpLowL + instMidRes + side + airL * (1 - 0.25 * centerMask);
+        const instR = lpLowR + instMidRes - side + airR * (1 - 0.25 * centerMask);
 
         if (selectedOutputId === "vocals") {
           outL[i] = Math.tanh(isolatedVocal * 1.25);
@@ -340,9 +368,11 @@ export async function runToolDspRecipe(
       const gBass = dbToLinear(params.bassDb ?? 2.0);
       const gDrums = dbToLinear(params.drumsDb ?? 2.0);
       let lpBass = 0;
+      let lpWarm = 0;
       let fastEnv = 0;
       let slowEnv = 0;
       const bassAlpha = (2 * Math.PI * 195) / sr;
+      const warmAlpha = (2 * Math.PI * 1100) / sr;
 
       for (let i = 0; i < source.length; i++) {
         const l = inL[i];
@@ -350,15 +380,19 @@ export async function runToolDspRecipe(
         const mid = 0.5 * (l + r);
         const side = 0.5 * (l - r);
         lpBass += bassAlpha * (mid - lpBass);
+        const upperMid = mid - lpBass;
+        lpWarm += warmAlpha * (upperMid - lpWarm);
         const absMid = Math.abs(mid);
         fastEnv = 0.975 * fastEnv + 0.025 * absMid;
         slowEnv = 0.9992 * slowEnv + 0.0008 * absMid;
         const transientMask = Math.min(1, Math.max(0, (fastEnv - slowEnv) * 4.5));
 
-        const bassStem = lpBass;
-        const drumStem = (mid - lpBass) * transientMask;
-        const voxStem = (mid - lpBass) * (1 - transientMask);
+        const bassStem = lpBass * (1 - transientMask * 0.65);
+        const drumStem = upperMid * transientMask + lpBass * transientMask * 0.65;
+        const voxStem = (upperMid - lpWarm * 0.45) * (1 - transientMask);
+        const pianoStem = lpWarm * 0.75 * (1 - transientMask);
         const gtrStem = side;
+        const otherStem = side * 0.35 + (upperMid - lpWarm) * 0.2;
 
         if (selectedOutputId === "vocals") {
           outL[i] = Math.tanh(voxStem * 1.3);
@@ -372,6 +406,12 @@ export async function runToolDspRecipe(
         } else if (selectedOutputId === "drums") {
           outL[i] = Math.tanh(drumStem * 1.5);
           outR[i] = Math.tanh(drumStem * 1.5);
+        } else if (selectedOutputId === "piano") {
+          outL[i] = Math.tanh(pianoStem * 1.35);
+          outR[i] = Math.tanh(pianoStem * 1.35);
+        } else if (selectedOutputId === "other") {
+          outL[i] = Math.tanh(otherStem * 1.35);
+          outR[i] = Math.tanh(-otherStem * 1.35);
         } else {
           outL[i] = Math.tanh(
             bassStem * gBass + drumStem * gDrums + voxStem * gVox + gtrStem * gGtr
@@ -385,133 +425,76 @@ export async function runToolDspRecipe(
     }
 
     case "reverb-remover": {
-      const strength = (params.dereverbAmount ?? 75) / 100;
-      let env = 0;
-      for (let i = 0; i < source.length; i++) {
-        const mag = 0.5 * (Math.abs(inL[i]) + Math.abs(inR[i]));
-        env = mag > env ? 0.88 * env + 0.12 * mag : 0.9991 * env + 0.0009 * mag;
-        const gate = Math.min(1, Math.pow(mag / Math.max(1e-5, env), strength * 1.45));
-        const dryL = inL[i] * gate;
-        const dryR = inR[i] * gate;
-        if (selectedOutputId === "noise") {
-          // Removed Reverb Tail (Room Bleed)
-          outL[i] = inL[i] - dryL;
-          outR[i] = inR[i] - dryR;
-        } else {
-          outL[i] = dryL;
-          outR[i] = dryR;
-        }
+      const res = await runReverbRemoverDsp(source, {
+        dereverbAmountPct: params.dereverbAmount ?? 75,
+        tailDecayGateMs: params.tailReleaseMs ?? 120,
+        boxinessCutFreqHz: params.boxinessCutFreqHz ?? 350,
+        boxinessCutDb: params.deBoxHz ?? -4,
+        dryRoomReBlendPct: params.dryRoomReBlendPct ?? 12,
+      });
+      if (selectedOutputId === "noise") {
+        return res.removedReverbTailBuffer;
       }
-      break;
+      return (params.dryRoomReBlendPct ?? 12) > 0
+        ? res.reblendedBuffer
+        : res.dryBuffer;
     }
 
     case "echo-remover": {
-      const suppress = (params.echoSuppression ?? 80) / 100;
-      const delaySamples = Math.floor(((params.delaySearchMs ?? 55) / 1000) * sr);
-      for (let i = 0; i < source.length; i++) {
-        const echoL = i >= delaySamples ? inL[i - delaySamples] * 0.38 * suppress : 0;
-        const echoR = i >= delaySamples ? inR[i - delaySamples] * 0.38 * suppress : 0;
-        const cleanL = Math.max(-0.99, Math.min(0.99, inL[i] - echoL));
-        const cleanR = Math.max(-0.99, Math.min(0.99, inR[i] - echoR));
-        if (selectedOutputId === "noise") {
-          outL[i] = echoL * 1.6;
-          outR[i] = echoR * 1.6;
-        } else {
-          outL[i] = cleanL;
-          outR[i] = cleanR;
-        }
+      const res = await runEchoRemoverDsp(source, {
+        echoSuppressionPct: params.echoSuppression ?? 80,
+        slapbackDelayMs: params.delaySearchMs ?? 42.5,
+        flutterDampingHz: params.highDampHz ?? 6500,
+        multiTapCancellation: true,
+      });
+      if (selectedOutputId === "noise") {
+        return res.isolatedEchoResidualBuffer;
       }
-      break;
+      return res.cleanBuffer;
     }
 
     case "audio-enhancer": {
+      const f0Raw = params.humNotchHz ?? 60;
+      const humFundamentalHz: 0 | 50 | 60 =
+        f0Raw === 50 ? 50 : f0Raw === 0 ? 0 : 60;
+      const res = await runAudioEnhancerDsp(source, {
+        macroProfileId: "GUITAR_AMP_HUM_HISS_KILLER",
+        humFundamentalHz,
+        denoiseAmountPct: params.denoiseAmount ?? 75,
+        presenceBoostDb: params.presenceBoostDb ?? 3.5,
+        hissGateThresholdDb: -42,
+        targetLufs: -14.0,
+      });
       if (selectedOutputId === "removedNoise") {
-        // Output isolated 60Hz hum + noise residual
-        const f0 = params.humNotchHz ?? 60;
-        for (let i = 0; i < source.length; i++) {
-          const t = i / sr;
-          const hum = Math.sin(2 * Math.PI * f0 * t) * 0.08;
-          const quietResidual = Math.abs(inL[i]) < 0.06 ? inL[i] : hum;
-          outL[i] = quietResidual;
-          outR[i] = quietResidual;
-        }
-        break;
+        return res.removedHumAndHissBuffer;
       }
-
-      const srcNode = offline.createBufferSource();
-      srcNode.buffer = source;
-      const f0 = params.humNotchHz ?? 60;
-
-      const hpf = offline.createBiquadFilter();
-      hpf.type = "highpass";
-      hpf.frequency.value = 85;
-
-      const notch1 = offline.createBiquadFilter();
-      notch1.type = "notch";
-      notch1.frequency.value = f0;
-      notch1.Q.value = 30;
-
-      const notch2 = offline.createBiquadFilter();
-      notch2.type = "notch";
-      notch2.frequency.value = f0 * 2;
-      notch2.Q.value = 30;
-
-      const notch3 = offline.createBiquadFilter();
-      notch3.type = "notch";
-      notch3.frequency.value = f0 * 3;
-      notch3.Q.value = 30;
-
-      const presence = offline.createBiquadFilter();
-      presence.type = "peaking";
-      presence.frequency.value = 3200;
-      presence.Q.value = 1.1;
-      presence.gain.value = params.presenceBoostDb ?? 3.5;
-
-      const comp = offline.createDynamicsCompressor();
-      comp.threshold.value = -18;
-      comp.ratio.value = 3.5;
-
-      srcNode.connect(hpf);
-      hpf.connect(notch1);
-      notch1.connect(notch2);
-      notch2.connect(notch3);
-      notch3.connect(presence);
-      presence.connect(comp);
-      comp.connect(offline.destination);
-      srcNode.start(0);
-      return await offline.startRendering();
+      return res.enhancedBuffer;
     }
 
     case "voice-changer": {
-      const st = params.pitchSemitones ?? 0;
-      const ct = (params.fineCents ?? 0) / 100;
-      const ratio = Math.pow(2, (st + ct) / 12);
-      const wet = (params.wetMix ?? 65) / 100;
-      const grainSize = 2048;
-      let phaseA = 0;
-      let phaseB = 0.5;
-      const rateDelta = (1 - ratio) / grainSize;
-      const adtDelay = Math.floor(sr * 0.022); // 22ms Abbey Road ADT
-
-      for (let i = 0; i < source.length; i++) {
-        phaseA = (phaseA + rateDelta + 1) % 1;
-        phaseB = (phaseA + 0.5) % 1;
-        const delayA = phaseA * grainSize;
-        const delayB = phaseB * grainSize;
-        const winA = 0.5 * (1 - Math.cos(2 * Math.PI * phaseA));
-        const winB = 0.5 * (1 - Math.cos(2 * Math.PI * phaseB));
-
-        const idxA = Math.max(0, Math.floor(i - delayA));
-        const idxB = Math.max(0, Math.floor(i - delayB));
-
-        const shiftedL = inL[idxA] * winA + inL[idxB] * winB;
-        const adtIdx = Math.max(0, i - adtDelay);
-        const shiftedR = inR[adtIdx] * 0.85 + shiftedL * 0.35;
-
-        outL[i] = Math.tanh(inL[i] * (1 - wet * 0.5) + shiftedL * wet);
-        outR[i] = Math.tanh(inR[i] * (1 - wet * 0.5) + shiftedR * wet);
-      }
-      break;
+      const presetIdx = Math.max(
+        0,
+        Math.min(ROCK_VOCAL_PRESETS.length - 1, Math.round(params.presetIndex ?? 1))
+      );
+      const presetId: RockVocalPresetId =
+        ROCK_VOCAL_PRESETS[presetIdx]?.id ?? "abbey-road-adt";
+      return await renderVocalPitchLabDsp(source, {
+        presetId,
+        pitchSemitones: params.pitchSemitones ?? 0,
+        fineCents: params.fineCents ?? 0,
+        formantShift: params.formantShift ?? 0,
+        adtDelayMs: params.adtDelayMs ?? 22,
+        adtDetuneCents: params.adtDetuneCents ?? 15,
+        adtWowHz: params.adtWowHz ?? 1.1,
+        adtWidthPct: params.adtWidthPct ?? 85,
+        harmonyMode:
+          (params.harmonyBlendPct ?? 0) > 10 ? "root-3rd-5th-minor" : "off",
+        harmonyBlendPct: params.harmonyBlendPct ?? 0,
+        tubeDriveDb: params.tubeDriveDb ?? 2.5,
+        slapbackMs: params.slapbackMs ?? 0,
+        slapbackFeedbackPct: params.slapbackFeedbackPct ?? 0,
+        wetMix: params.wetMix ?? 65,
+      });
     }
 
     case "bpm-finder": {
