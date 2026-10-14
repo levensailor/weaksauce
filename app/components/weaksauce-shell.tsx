@@ -20,6 +20,16 @@ import {
   runToolDspRecipe,
   synthesizeDemoAudioBuffer,
 } from "@/app/lib/audio-dsp";
+import {
+  encodeFlacBlob,
+  encodeMp3Blob,
+  encodeWavBlob,
+} from "@/app/lib/dsp/codecs";
+import VocalRemoverRack from "@/app/components/tools/VocalRemoverRack";
+import StemSplitterRack from "@/app/components/tools/StemSplitterRack";
+import CleanupSuiteRack from "@/app/components/tools/CleanupSuiteRack";
+import VocalBpmLabRack from "@/app/components/tools/VocalBpmLabRack";
+import CaptureConvertRack from "@/app/components/tools/CaptureConvertRack";
 
 interface BackendToolResponse {
   tool_id: string;
@@ -33,6 +43,7 @@ interface BackendToolResponse {
     quarter_ms: number;
     dotted_eighth_ms: number;
     eighth_ms: number;
+    eighth_triplet_ms?: number;
     slapback_sixteenth_ms: number;
   };
   outputs: Array<{
@@ -54,7 +65,6 @@ export default function WeaksauceShell() {
   const [showDroppedDrawer, setShowDroppedDrawer] = useState<boolean>(false);
   const [highContrastDark, setHighContrastDark] = useState<boolean>(true);
 
-  // Audio Context & Transport
   const audioCtxRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -75,7 +85,6 @@ export default function WeaksauceShell() {
     "01. BOOT | 3-PIECE GARAGE ROCK DEMO LOADED (44.1kHz STEREO)",
   ]);
 
-  // Tool Parameters & Select Options
   const [paramValues, setParamValues] = useState<Record<string, number>>(() => {
     const initial: Record<string, number> = {};
     for (const tool of TOOLS) {
@@ -158,15 +167,12 @@ export default function WeaksauceShell() {
       try {
         sourceNodeRef.current.stop();
         sourceNodeRef.current.disconnect();
-      } catch {
-        // already stopped
-      }
+      } catch {}
       sourceNodeRef.current = null;
     }
     setIsPlaying(false);
   }, []);
 
-  // Load initial 3-piece rock band demo stem on mount
   useEffect(() => {
     const ctx = ensureAudioContext();
     const demo = synthesizeDemoAudioBuffer(ctx, "trio-mix");
@@ -187,7 +193,6 @@ export default function WeaksauceShell() {
     return analyzeAudioBuffer(currentAuditionBuffer);
   }, [currentAuditionBuffer]);
 
-  // Draw Brutalist stereo waveform & stem bars
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
     if (!canvas || !currentAuditionBuffer) return;
@@ -258,7 +263,6 @@ export default function WeaksauceShell() {
     }
   }, [currentAuditionBuffer, abMode, highContrastDark, activeTool.outputs, selectedOutputStemId]);
 
-  // Sync with `/api/v1/tools/{slug}` backend endpoint
   useEffect(() => {
     if (!metrics) return;
     let cancelled = false;
@@ -287,9 +291,7 @@ export default function WeaksauceShell() {
           const data: BackendToolResponse = await res.json();
           if (!cancelled) setBackendResponse(data);
         }
-      } catch {
-        // Non-blocking telemetry
-      }
+      } catch {}
     }
     syncBackend();
     return () => {
@@ -359,23 +361,71 @@ export default function WeaksauceShell() {
     }
   };
 
-  const handlePipeToTool = (nextToolId: ToolId) => {
-    const sourceForPipe = processedBuffer ?? activeBuffer;
-    if (!sourceForPipe) return;
-    stopPlayback();
-    const nextTool = getToolById(nextToolId);
-    setActiveBuffer(sourceForPipe);
-    setProcessedBuffer(sourceForPipe);
-    setActiveToolsetId(nextTool.toolsetId);
-    setActiveToolId(nextTool.id);
-    applyToolDefaults(nextTool);
-    setWorkspaceMode("RACK");
-    setRightTab("WORKBENCH");
-    const stamp = `PIPED [${activeTool.code} ${selectedOutputStemId.toUpperCase()}] -> [${nextTool.code} ${nextTool.title.toUpperCase()}]`;
-    setBufferLabel(stamp);
-    setPipelineHistory((prev) => [...prev, stamp]);
-    setStatusMessage(stamp);
-  };
+  const handleCommitRackBuffer = useCallback(
+    (next: AudioBuffer, label: string) => {
+      stopPlayback();
+      setActiveBuffer(next);
+      setProcessedBuffer(next);
+      setAbMode("WET_OUTPUT");
+      setBufferLabel(label);
+      setPipelineHistory((prev) => [...prev, `COMMIT // ${label}`]);
+      setStatusMessage(`COMMITTED TO STUDIO BUS // ${label}`);
+    },
+    [stopPlayback]
+  );
+
+  const handlePipeToTool = useCallback(
+    (
+      nextToolId: ToolId,
+      overrideBuffer?: AudioBuffer,
+      overrideLabel?: string
+    ) => {
+      const sourceForPipe = overrideBuffer ?? processedBuffer ?? activeBuffer;
+      if (!sourceForPipe) return;
+      stopPlayback();
+      const nextTool = getToolById(nextToolId);
+      setActiveBuffer(sourceForPipe);
+      setProcessedBuffer(sourceForPipe);
+      setActiveToolsetId(nextTool.toolsetId);
+      setActiveToolId(nextTool.id);
+      applyToolDefaults(nextTool);
+      setWorkspaceMode("RACK");
+      setRightTab("WORKBENCH");
+      const stamp =
+        overrideLabel ??
+        `PIPED [${activeTool.code} ${selectedOutputStemId.toUpperCase()}] -> [${nextTool.code} ${nextTool.title.toUpperCase()}]`;
+      setBufferLabel(stamp);
+      setPipelineHistory((prev) => [...prev, stamp]);
+      setStatusMessage(stamp);
+    },
+    [
+      activeBuffer,
+      activeTool.code,
+      applyToolDefaults,
+      processedBuffer,
+      selectedOutputStemId,
+      stopPlayback,
+    ]
+  );
+
+  const handleSendCustomStemToTool = useCallback(
+    (targetToolId: ToolId, buffer: AudioBuffer, stemLabel: string) => {
+      stopPlayback();
+      const nextTool = getToolById(targetToolId);
+      setActiveBuffer(buffer);
+      setProcessedBuffer(buffer);
+      setActiveToolsetId(nextTool.toolsetId);
+      setActiveToolId(nextTool.id);
+      applyToolDefaults(nextTool);
+      setWorkspaceMode("RACK");
+      setRightTab("WORKBENCH");
+      const stamp = `PIPED [${stemLabel}] -> [${nextTool.code} ${nextTool.title.toUpperCase()}]`;
+      setBufferLabel(stamp);
+      setPipelineHistory((prev) => [...prev, stamp]);
+      setStatusMessage(stamp);
+    },
+    [applyToolDefaults, stopPlayback]
+  );
 
   const handleTogglePlay = async () => {
     if (isPlaying) {
@@ -401,18 +451,31 @@ export default function WeaksauceShell() {
   const handleExportStemFile = (stemId?: string, ext: string = "wav") => {
     const target = currentAuditionBuffer;
     if (!target) return;
-    const blob = encodeAudioBufferToWavBlob(target);
+    const stemTag = stemId ?? selectedOutputStemId;
+    let blob: Blob;
+    let finalExt = ext;
+    if (stemTag === "recordingFlac" || ext === "flac") {
+      blob = encodeFlacBlob(target, 24);
+      finalExt = "flac";
+    } else if (stemTag === "recordingMp3" || ext === "mp3") {
+      blob = encodeMp3Blob(target, 320);
+      finalExt = "mp3";
+    } else if (stemTag === "recordingWav") {
+      blob = encodeWavBlob(target, 24);
+      finalExt = "wav";
+    } else {
+      blob = encodeAudioBufferToWavBlob(target);
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    const stemTag = stemId ?? selectedOutputStemId;
-    a.download = `weaksauce-${activeTool.slug}-${stemTag}.${ext}`;
+    a.download = `weaksauce-${activeTool.slug}-${stemTag}.${finalExt}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     setStatusMessage(
-      `DOWNLOADED // weaksauce-${activeTool.slug}-${stemTag}.${ext}`
+      `DOWNLOADED // weaksauce-${activeTool.slug}-${stemTag}.${finalExt}`
     );
   };
 
@@ -507,7 +570,6 @@ export default function WeaksauceShell() {
           : "bg-[#F4F3EF] text-[#0D0D0D]"
       }`}
     >
-      {/* TOP BRUTALIST SYSTEM BAR */}
       <header
         className={`border-b-2 ${
           highContrastDark ? "border-[#F4F3EF] bg-[#121212]" : "border-[#0D0D0D] bg-[#E8E6DF]"
@@ -527,7 +589,6 @@ export default function WeaksauceShell() {
           </div>
         </div>
 
-        {/* GLOBAL TELEMETRY & AUDIT BUTTONS */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {metrics && (
             <div className="hidden xl:flex items-center gap-2 border-2 border-current px-2.5 py-1 bg-black/20">
@@ -573,9 +634,7 @@ export default function WeaksauceShell() {
         </div>
       </header>
 
-      {/* MAIN SPLIT SHELL: LEFT NAVIGATION RAIL (4 ROCK TOOLSETS) + RIGHT WORKSPACE */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* LEFT NAVIGATION RAIL */}
         <aside
           aria-label="Rock Band Audio Toolsets"
           className={`w-full lg:w-[320px] xl:w-[350px] shrink-0 border-b-2 lg:border-b-0 lg:border-r-2 ${
@@ -636,7 +695,6 @@ export default function WeaksauceShell() {
                       </p>
                     </button>
 
-                    {/* Nested tool buttons for the 4 category toolsets */}
                     {isSelected && ts.id !== "all" && (
                       <div
                         className={`border-t-2 border-current divide-y divide-current/30 ${
@@ -689,7 +747,6 @@ export default function WeaksauceShell() {
             </nav>
           </div>
 
-          {/* FILTERED-OUT TRANSPARENCY DRAWER (DROPPED FROM VOICE.AI [3]) + SIGNAL LOG */}
           <div className="p-3 border-t-2 border-current text-[11px] space-y-2.5">
             <div className="border-2 border-[#FF3B00] p-2 bg-[#FF3B00]/10">
               <button
@@ -725,9 +782,7 @@ export default function WeaksauceShell() {
           </div>
         </aside>
 
-        {/* RIGHT-HAND MAIN WORKSPACE */}
         <main className="flex-1 flex flex-col overflow-y-auto">
-          {/* WORKSPACE SUB-HEADER */}
           <div
             className={`border-b-2 border-current p-3 flex flex-wrap items-center justify-between gap-3 ${
               highContrastDark ? "bg-[#161616]" : "bg-[#E4E2DA]"
@@ -785,7 +840,6 @@ export default function WeaksauceShell() {
             </div>
           </div>
 
-          {/* SHARED 3-PIECE ROCK BAND I/O DECK */}
           <section className="p-4 border-b-2 border-current space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -833,7 +887,6 @@ export default function WeaksauceShell() {
               </div>
             </div>
 
-            {/* WAVEFORM PLAYER & MULTI-STEM OUTPUT SELECTOR */}
             <div className="relative border-2 border-current bg-[#0D0D0D] p-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between text-[11px] text-[#F4F3EF] gap-2">
                 <div className="font-bold">
@@ -859,7 +912,6 @@ export default function WeaksauceShell() {
                 className="w-full h-[130px] block border border-[#333333]"
               />
 
-              {/* VOICE.AI PARITY OUTPUT STEM ROWS */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1">
                 {activeTool.outputs.map((stem) => {
                   const isStemSelected = stem.id === selectedOutputStemId;
@@ -895,7 +947,6 @@ export default function WeaksauceShell() {
                 })}
               </div>
 
-              {/* TRANSPORT & PIPE TO NEXT TOOL BAR */}
               <div className="pt-2 border-t border-[#333333] flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -936,7 +987,6 @@ export default function WeaksauceShell() {
                   </button>
                 </div>
 
-                {/* CROSS-TOOL PIPELINE SELECTOR */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[10px] font-black uppercase text-[#00E5FF]">
                     SEND OUTPUT TO TOOL →
@@ -957,7 +1007,6 @@ export default function WeaksauceShell() {
               </div>
             </div>
 
-            {/* STATUS TICKER */}
             <div className="text-xs font-bold px-2.5 py-1 border-2 border-current bg-black/20 flex flex-wrap items-center justify-between gap-2">
               <span>STATUS: {statusMessage}</span>
               {backendResponse && (
@@ -970,7 +1019,6 @@ export default function WeaksauceShell() {
             </div>
           </section>
 
-          {/* WORKSPACE CONTENT: VOICE.AI AUDIT MATRIX / TOOLSET GRID / OSS SPEC / ACTIVE RACK */}
           {workspaceMode === "VOICE_AI_AUDIT" ? (
             <section className="p-4 space-y-4">
               <div className="border-2 border-current p-4 space-y-2">
@@ -1117,7 +1165,6 @@ export default function WeaksauceShell() {
               </div>
             </section>
           ) : rightTab === "OSS_SPEC" ? (
-            /* BRUTALIST OSS SPEC & ARCHITECTURE PLAN DRAWER/TAB */
             <section className="p-4 space-y-4">
               <div className="border-2 border-current p-4 shadow-[4px_4px_0px_#B8FF01] space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-current pb-2">
@@ -1187,153 +1234,77 @@ export default function WeaksauceShell() {
               </div>
             </section>
           ) : (
-            /* ACTIVE INTERACTIVE DSP RACK */
             <section className="p-4 grid grid-cols-1 xl:grid-cols-3 gap-4">
-              {/* PARAMETER FADERS & SELECTORS (2 COLS) */}
-              <div className="xl:col-span-2 border-2 border-current p-4 space-y-4 shadow-[4px_4px_0px_#00E5FF]">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-current pb-2">
-                  <div>
-                    <span className="text-xs font-black uppercase text-[#B8FF01]">
-                      INTERACTIVE ROCK STUDIO RACK | {activeTool.code}
-                    </span>
-                    <h2 className="text-base font-black uppercase">{activeTool.tagline}</h2>
-                  </div>
-                  <span className="text-[11px] font-black px-2 py-0.5 bg-[#FF3B00] text-[#0D0D0D]">
-                    VOICE.AI PARITY: {activeTool.voiceAiOriginalName}
-                  </span>
-                </div>
-
-                <p className="text-xs opacity-90">{activeTool.description}</p>
-
-                <div className="p-2.5 border-2 border-current bg-black/25 text-xs">
-                  <span className="font-black text-[#00E5FF] uppercase">
-                    3-PIECE BAND USE CASE (JEFF):{" "}
-                  </span>
-                  {activeTool.bandUseCase}
-                </div>
-
-                {/* SELECT DROPDOWN / MODE BUTTONS IF PRESENT */}
-                {activeTool.selectControls && activeTool.selectControls.length > 0 && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {activeTool.selectControls.map((sel) => {
-                      const currentChoice = selectValues[sel.id] ?? sel.defaultOption;
-                      return (
-                        <div
-                          key={sel.id}
-                          className="border-2 border-current p-3 space-y-2 bg-black/15"
-                        >
-                          <label className="block text-xs font-black uppercase text-[#B8FF01]">
-                            {sel.label}
-                          </label>
-                          <select
-                            value={currentChoice}
-                            onChange={(e) =>
-                              setSelectValues((prev) => ({
-                                ...prev,
-                                [sel.id]: e.target.value,
-                              }))
-                            }
-                            className="w-full p-2 border-2 border-current bg-[#0D0D0D] text-[#F4F3EF] text-xs font-bold"
-                          >
-                            {sel.options.map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      );
-                    })}
+              <div className="xl:col-span-2 space-y-4">
+                {activeTool.id === "vocal-remover" ? (
+                  <VocalRemoverRack
+                    tool={activeTool}
+                    activeBuffer={activeBuffer}
+                    bufferLabel={bufferLabel}
+                    highContrastDark={highContrastDark}
+                    onCommitBuffer={handleCommitRackBuffer}
+                    onSendToTool={handleSendCustomStemToTool}
+                    onStatusChange={setStatusMessage}
+                  />
+                ) : activeTool.id === "stem-splitter" ? (
+                  <StemSplitterRack
+                    tool={activeTool}
+                    activeBuffer={activeBuffer}
+                    bufferLabel={bufferLabel}
+                    highContrastDark={highContrastDark}
+                    onCommitBuffer={handleCommitRackBuffer}
+                    onSendToTool={handleSendCustomStemToTool}
+                    onStatusChange={setStatusMessage}
+                  />
+                ) : activeTool.toolsetId === "room-cleanup" ? (
+                  <CleanupSuiteRack
+                    tool={activeTool}
+                    activeBuffer={activeBuffer}
+                    selectedOutputStemId={selectedOutputStemId}
+                    onSelectOutputStemId={(stemId) => setSelectedOutputStemId(stemId)}
+                    onCommitProcessedBuffer={(nextBuffer, stemId, statusSummary) => {
+                      setProcessedBuffer(nextBuffer);
+                      setSelectedOutputStemId(stemId);
+                      setAbMode("WET_OUTPUT");
+                      setStatusMessage(statusSummary);
+                    }}
+                  />
+                ) : activeTool.toolsetId === "vocal-key-bpm" ? (
+                  <VocalBpmLabRack
+                    tool={activeTool}
+                    activeBuffer={activeBuffer}
+                    onCommitBuffer={handleCommitRackBuffer}
+                  />
+                ) : (
+                  <div className="border-2 border-current p-4 space-y-4 shadow-[4px_4px_0px_#00E5FF]">
+                    <CaptureConvertRack
+                      key={activeTool.id}
+                      tool={activeTool}
+                      activeBuffer={currentAuditionBuffer}
+                      onCommitBuffer={handleCommitRackBuffer}
+                      onPipeToTool={handlePipeToTool}
+                    />
                   </div>
                 )}
+              </div>
 
-                {/* NUMERIC DSP SLIDERS */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                  {activeTool.params.map((param) => {
-                    const val = paramValues[param.id] ?? param.defaultValue;
-                    return (
-                      <div
-                        key={param.id}
-                        className="border-2 border-current p-3 flex flex-col gap-2 bg-black/15"
-                      >
-                        <div className="flex items-center justify-between text-xs font-black">
-                          <span>{param.label}</span>
-                          <span className="px-2 py-0.5 bg-[#B8FF01] text-[#0D0D0D]">
-                            {val} {param.unit}
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min={param.min}
-                          max={param.max}
-                          step={param.step}
-                          value={val}
-                          onChange={(e) =>
-                            setParamValues((prev) => ({
-                              ...prev,
-                              [param.id]: parseFloat(e.target.value),
-                            }))
-                          }
-                          className="w-full accent-[#FF3B00] cursor-pointer"
-                        />
-                        <div className="flex justify-between text-[10px] opacity-65">
-                          <span>
-                            MIN: {param.min} {param.unit}
-                          </span>
-                          <span>
-                            DEFAULT: {param.defaultValue} {param.unit}
-                          </span>
-                          <span>
-                            MAX: {param.max} {param.unit}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* ACTION BUTTONS */}
-                <div className="pt-2 border-t-2 border-current flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleRunDsp()}
-                      className="px-4 py-2 border-2 border-[#0D0D0D] bg-[#B8FF01] text-[#0D0D0D] font-black text-xs uppercase cursor-pointer shadow-[3px_3px_0px_#FF3B00]"
-                    >
-                      RENDER & AUDITION [{activeTool.code}]
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const reset: Record<string, number> = {};
-                        for (const p of activeTool.params) reset[p.id] = p.defaultValue;
-                        setParamValues(reset);
-                      }}
-                      className="px-3 py-2 border-2 border-current text-xs font-bold uppercase cursor-pointer hover:bg-[#FF3B00] hover:text-[#0D0D0D]"
-                    >
-                      RESET KNOBS
-                    </button>
+              <div className="border-2 border-current p-4 space-y-4 shadow-[4px_4px_0px_#FF3B00]">
+                <div className="border-b-2 border-current pb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-black uppercase text-[#00E5FF]">
+                      STUDIO BUS TELEMETRY
+                    </span>
+                    <h3 className="text-sm font-black uppercase">
+                      KEY / BPM + GUITAR PEDAL DELAY + LUFS
+                    </h3>
                   </div>
-
                   <button
                     type="button"
                     onClick={handleTapTempo}
-                    className="px-3 py-2 border-2 border-current bg-[#00E5FF] text-[#0D0D0D] font-black text-xs uppercase cursor-pointer"
+                    className="px-2 py-1 border border-current bg-[#00E5FF] text-[#0D0D0D] font-black text-[10px] uppercase cursor-pointer"
                   >
-                    SPACEBAR / CLICK TAP TEMPO {tappedBpm ? `(${tappedBpm} BPM)` : ""}
+                    TAP TEMPO {tappedBpm ? `(${tappedBpm})` : ""}
                   </button>
-                </div>
-              </div>
-
-              {/* RIGHT TELEMETRY: KEY/BPM, GUITAR DELAY CALCULATOR & CHROMA (1 COL) */}
-              <div className="border-2 border-current p-4 space-y-4 shadow-[4px_4px_0px_#FF3B00]">
-                <div className="border-b-2 border-current pb-2">
-                  <span className="text-xs font-black uppercase text-[#00E5FF]">
-                    STUDIO BUS TELEMETRY
-                  </span>
-                  <h3 className="text-sm font-black uppercase">
-                    KEY / BPM + GUITAR PEDAL DELAY + LUFS
-                  </h3>
                 </div>
 
                 {metrics && (
@@ -1363,7 +1334,6 @@ export default function WeaksauceShell() {
                       </div>
                     </div>
 
-                    {/* GUITAR PEDAL & STUDIO REVERB DELAY TIME CALCULATOR (MS) */}
                     <div className="border-2 border-current p-2.5 space-y-1.5 text-xs bg-black/20">
                       <div className="font-black uppercase text-[#FF3B00]">
                         GUITAR PEDAL DELAY SUBDIVISIONS (@ {tappedBpm ?? metrics.detectedBpm} BPM)
@@ -1390,7 +1360,6 @@ export default function WeaksauceShell() {
                       </div>
                     </div>
 
-                    {/* 12-BIN CHROMA ENERGY BARS */}
                     <div className="space-y-1.5">
                       <div className="text-[11px] font-black uppercase">
                         12-BIN CHROMAGRAM ENERGY (ROOT / 4TH / 5TH)
